@@ -9,6 +9,7 @@ import com.amazonaws.services.s3.model.DeleteObjectRequest;
 import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.ListObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectListing;
+import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.ProgressEvent;
 import com.amazonaws.services.s3.model.ProgressListener;
 import com.amazonaws.services.s3.model.PutObjectRequest;
@@ -17,10 +18,16 @@ import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.amazonaws.services.s3.transfer.Transfer;
 import com.amazonaws.services.s3.transfer.TransferManager;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.net.URL;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
+import org.apache.http.HttpStatus;
+import sun.security.provider.MD5;
 
 /**
  *
@@ -87,11 +94,32 @@ public class S3Wrapper {
                 throw new Exception("The specified file does not exists");
             }
             System.out.println("Uploading file...");
-            key = fileToUpload.getName();
-            PutObjectRequest req = new PutObjectRequest(bucketName, key, fileToUpload)
+            key = fileToUpload.getName(); 
+            // Check if there is already an image with the same name
+            boolean found = true;
+            ObjectMetadata meta = null;
+            try {
+                meta = s3.getObjectMetadata(bucketName, key);
+            } catch (AmazonServiceException e) {
+                if (e.getStatusCode() != HttpStatus.SC_NOT_FOUND) {
+                    throw e;
+                }
+                found = false;
+            }
+            boolean alreadyUploaded = false;
+            if (found) {
+                String checksum = S3Wrapper.getMD5Checksum(fileToUpload);
+                if (checksum.equals(meta.getContentMD5())) {
+                    System.out.println("Exact same file already uploaded... skipping operation");
+                } else {
+                    alreadyUploaded = true;
+                }
+            }
+            if (!alreadyUploaded) {
+                PutObjectRequest req = new PutObjectRequest(bucketName, key, fileToUpload)
                     .withProgressListener(new TransferProgressListener());
-            transfer = tx.upload(req);
-            
+                transfer = tx.upload(req);
+            }
         } catch (AmazonServiceException se) {
             printServiceException(se);
         } catch (AmazonClientException ce) {
@@ -103,6 +131,32 @@ public class S3Wrapper {
         d.setTime(d.getTime() + OBJECT_URL_VALIDITY);
         return s3.generatePresignedUrl(bucketName, key, d);
     }
+    
+    public static byte[] createChecksum(File file) throws Exception{
+     InputStream fis =  new FileInputStream(file);
+
+     byte[] buffer = new byte[1024];
+     MessageDigest complete = MessageDigest.getInstance("MD5");
+     int numRead;
+     do {
+      numRead = fis.read(buffer);
+      if (numRead > 0) {
+        complete.update(buffer, 0, numRead);
+        }
+      } while (numRead != -1);
+     fis.close();
+     return complete.digest();
+   }
+
+   public static String getMD5Checksum(File file) throws Exception {
+     byte[] b = createChecksum(file);
+     String result = "";
+     for (int i=0; i < b.length; i++) {
+       result +=
+          Integer.toString( ( b[i] & 0xff ) + 0x100, 16).substring( 1 );
+      }
+     return result;
+   }
     
     public void downloadImage(String serviceId, String imageName, String destPath) throws Exception {
         AmazonS3 s3 = getAmazonS3Client();

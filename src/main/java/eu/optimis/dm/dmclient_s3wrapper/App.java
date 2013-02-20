@@ -7,7 +7,9 @@ import java.awt.GridBagLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
+import java.io.FileInputStream;
 import java.net.URL;
+import java.util.Properties;
 import java.util.UUID;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
@@ -22,6 +24,14 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.ListModel;
 import javax.swing.ListSelectionModel;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.OptionBuilder;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
 
 /**
  * @author oriol.collell
@@ -29,10 +39,17 @@ import javax.swing.ListSelectionModel;
  */
 public class App  {
     
-    private static String AWS_PUBLIC_KEY = "AKIAJU57M324DUE4MIJQ";
-    private static String AWS_SECRET_KEY = "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";
+    private static final String DEFAULT_PROPERTIES_PATH = "wrapper.properties";
+    private static final String PATH_OPT = "c";
+    private static final String AWS_ACCESS_PROP = "AWSAccessKey";
+    private static final String AWS_SECRET_PROP = "AWSSecretKey";
+    
     private static String SERVICE_ID = "d3f64f3f-c57b-460c-97d4-9b84c576c397"; //Random service id for testing
-     
+    
+    private static String propertiesPath = DEFAULT_PROPERTIES_PATH;
+    private static String accessKey;
+    private static String secretKey;
+    
     private JButton button;
     private JButton buttonDownload;
     private JButton buttonDelete;
@@ -46,9 +63,60 @@ public class App  {
     
     public static void main( String[] args ) {
         try {
-            new App();
+            Options options = new Options();
+            Option conf = OptionBuilder.withArgName("configuration path").hasArg().withDescription("Configuration path").create(PATH_OPT);
+            options.addOption(conf);
+
+            CommandLineParser parser = new GnuParser();
+            CommandLine line = null;
+            try {
+                line = parser.parse(options, args);
+            }
+            catch (ParseException exp) {
+                System.err.println("Incorrect parameters: " + exp.getMessage());
+                HelpFormatter formatter = new HelpFormatter();
+                formatter.printHelp("collector", options);
+                System.exit(2); //Incorrect usage
+            }
+
+            if (line.hasOption(PATH_OPT)) {
+                propertiesPath = line.getOptionValue(PATH_OPT);
+                System.out.println("Using Properties file: " + propertiesPath);
+            } else {
+                System.out.println("Using default Configuration file: " + DEFAULT_PROPERTIES_PATH
+                        + " (To use custom path use -c argument)");
+                propertiesPath = DEFAULT_PROPERTIES_PATH;
+            }
+
+            getProperties();
+            App app = new App();
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+    
+    private static void getProperties() {
+        accessKey = getStringProperty(AWS_ACCESS_PROP);
+        if (accessKey.isEmpty()) {
+            throw new RuntimeException("No Access Key specified in the properties file");
+        }
+        
+        secretKey = getStringProperty(AWS_SECRET_PROP);
+        if (secretKey.isEmpty()) {
+            throw new RuntimeException("No Secret Key specified in the properties file");
+        }
+    }
+    
+    public static String getStringProperty(String key) {
+        try {
+            Properties props = new Properties();
+            FileInputStream in = new FileInputStream(propertiesPath);
+            props.load(in);
+
+            String defaultValue = props.getProperty(key);
+            return System.getProperty(key, defaultValue);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
     
@@ -124,7 +192,7 @@ public class App  {
             int showOpenDialog = fileChooser.showOpenDialog(frame);
             if (showOpenDialog != JFileChooser.APPROVE_OPTION) return;
             
-            S3Wrapper s3 = new S3Wrapper(AWS_PUBLIC_KEY, AWS_SECRET_KEY);
+            S3Wrapper s3 = new S3Wrapper(accessKey, secretKey);
             try {
                 File selFile = fileChooser.getSelectedFile();
                 URL url = s3.uploadImage(serviceIdText.getText(), selFile.getPath());
@@ -148,7 +216,7 @@ public class App  {
                 int showSaveDialog = fileChooser.showSaveDialog(frame);
                 if (showSaveDialog != JFileChooser.APPROVE_OPTION) return;
                 
-                S3Wrapper s3 = new S3Wrapper(AWS_PUBLIC_KEY, AWS_SECRET_KEY);
+                S3Wrapper s3 = new S3Wrapper(accessKey, secretKey);
                 try {
                     File selDir = fileChooser.getSelectedFile();
                     s3.downloadImage(serviceIdText.getText(), file, selDir.getPath());
@@ -169,7 +237,7 @@ public class App  {
             if (!list.isSelectionEmpty()) {
                 String file = (String) list.getSelectedValue();
                 
-                S3Wrapper s3 = new S3Wrapper(AWS_PUBLIC_KEY, AWS_SECRET_KEY);
+                S3Wrapper s3 = new S3Wrapper(accessKey, secretKey);
                 try {
                     s3.deleteImage(serviceIdText.getText(), file);
                     listModel.removeElement(file);
@@ -198,7 +266,7 @@ public class App  {
     
     private void updateListModel() {
         listModel.removeAllElements();
-        S3Wrapper s3 = new S3Wrapper(AWS_PUBLIC_KEY, AWS_SECRET_KEY);
+        S3Wrapper s3 = new S3Wrapper(accessKey, secretKey);
         for (String image : s3.listImages(serviceIdText.getText())) {
             listModel.addElement(image);
         }
